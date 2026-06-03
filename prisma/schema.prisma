@@ -1,0 +1,42 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ExtractionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum FileType {
+  PDF
+  IMAGE
+}
+
+model Extraction {
+  id          String           @id @default(cuid())
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  fileName    String
+  originalName String
+  fileType    FileType
+  mimeType    String
+  fileSizeBytes Int
+  status      ExtractionStatus @default(PENDING)
+  rawContent  String?          @db.Text
+  aiProvider  String?
+  aiModel     String?
+  processedAt DateTime?
+  errorMessage String?
+
+  @@index([status])
+  @@index([createdAt])
+}
