@@ -18,7 +18,7 @@ export interface ExtractionResult {
 
 export interface ExtractRequestBody {
   // reserved for future per-request options
-  provider?: "anthropic" | "openai";
+  provider?: "anthropic" | "openai" | "gemini";
 }
 
 export interface ApiResponse<T = unknown> {

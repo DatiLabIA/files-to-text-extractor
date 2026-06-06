@@ -95,19 +95,28 @@ router.post(
  * GET /api/extract/:id
  * Retrieve a previously processed extraction by ID.
  */
+type ExtractParams = {
+  id: string;
+};
+
 router.get(
   "/:id",
-  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  async (
+    req: Request<ExtractParams>,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> => {
     const { id } = req.params;
 
     const extraction = await prisma.extraction
-      .findUnique({ where: { id } })
+      .findUnique({
+        where: { id },
+      })
       .catch((err: unknown) => next(err));
 
     if (!extraction) {
       return next(new AppError(`Extraction with id "${id}" not found.`, 404));
     }
-
     const response: ApiResponse<ExtractionResult> = {
       success: true,
       data: extraction as ExtractionResult,
