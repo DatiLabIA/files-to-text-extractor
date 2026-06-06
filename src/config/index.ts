@@ -7,11 +7,13 @@ const envSchema = z.object({
     .enum(["development", "production", "test"])
     .default("development"),
   DATABASE_URL: z.string().min(1),
-  AI_PROVIDER: z.enum(["anthropic", "openai"]).default("anthropic"),
+  AI_PROVIDER: z.enum(["anthropic", "openai", "gemini"]).default("anthropic"),
   ANTHROPIC_API_KEY: z.string().optional(),
-  ANTHROPIC_MODEL: z.string().default("claude-opus-4-5"),
+  ANTHROPIC_MODEL: z.string().default("claude-haiku-4-5"),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default("gpt-4o"),
+  GEMINI_API_KEY: z.string().optional(),
+  GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
   MAX_FILE_SIZE_MB: z.string().default("20"),
   ALLOWED_MIME_TYPES: z
     .string()
@@ -44,6 +46,10 @@ export const config = {
     openai: {
       apiKey: parsed.data.OPENAI_API_KEY ?? "",
       model: parsed.data.OPENAI_MODEL,
+    },
+    gemini: {
+      apiKey: parsed.data.GEMINI_API_KEY ?? "",
+      model: parsed.data.GEMINI_MODEL,
     },
   },
   upload: {
