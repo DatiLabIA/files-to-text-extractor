@@ -22,11 +22,24 @@ router.post(
   upload.single("file"),
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const file = req.file;
-
+    const provider = req.body.provider as string | undefined;
     if (!file) {
       return next(
         new AppError(
           'No file uploaded. Send a file in the "file" form field.',
+          400,
+        ),
+      );
+    }
+
+    if (
+      provider !== undefined &&
+      provider !== "anthropic" &&
+      provider !== "gemini"
+    ) {
+      return next(
+        new AppError(
+          'Invalid provider. Allowed values: "anthropic" or "gemini".',
           400,
         ),
       );
@@ -53,7 +66,11 @@ router.post(
         data: { status: "PROCESSING" },
       });
 
-      const result = await extractTextFromFile(file.path, file.mimetype);
+      const result = await extractTextFromFile(
+        file.path,
+        file.mimetype,
+        provider,
+      );
 
       // Mark as COMPLETED
       const completed = await prisma.extraction.update({
