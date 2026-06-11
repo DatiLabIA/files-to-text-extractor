@@ -1,5 +1,4 @@
 import Anthropic from "@anthropic-ai/sdk";
-import OpenAI from "openai";
 import { GoogleGenAI } from "@google/genai";
 import * as fs from "fs";
 import { config } from "../config";
@@ -78,49 +77,6 @@ async function extractWithAnthropic(
   };
 }
 
-// ── OpenAI (GPT-4o) ────────────────────────────────────────────────────────
-
-async function extractWithOpenAI(
-  fileBuffer: Buffer,
-  mimeType: string,
-): Promise<AIExtractionResult> {
-  if (!config.ai.openai.apiKey) {
-    throw new AppError("OPENAI_API_KEY is not configured", 500);
-  }
-
-  const client = new OpenAI({ apiKey: config.ai.openai.apiKey });
-  const base64Data = fileBuffer.toString("base64");
-  const dataUri = `data:${mimeType};base64,${base64Data}`;
-
-  const response = await client.chat.completions.create({
-    model: config.ai.openai.model,
-    max_tokens: 4096,
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "image_url",
-            image_url: { url: dataUri, detail: "high" },
-          },
-          { type: "text", text: EXTRACTION_PROMPT },
-        ],
-      },
-    ],
-  });
-
-  const content = response.choices[0]?.message?.content;
-  if (!content) {
-    throw new AppError("AI returned no text content", 500);
-  }
-
-  return {
-    content,
-    provider: "openai",
-    model: config.ai.openai.model,
-  };
-}
-
 // ── Google Gemini ───────────────────────────────────────────────────────────
 
 async function extractWithGemini(
@@ -168,14 +124,13 @@ async function extractWithGemini(
 export async function extractTextFromFile(
   filePath: string,
   mimeType: string,
+  provider?: "anthropic" | "gemini",
 ): Promise<AIExtractionResult> {
   const fileBuffer = fs.readFileSync(filePath);
-
-  switch (config.ai.provider) {
+  const activeProvider = provider || config.ai.provider;
+  switch (activeProvider) {
     case "anthropic":
       return extractWithAnthropic(fileBuffer, mimeType);
-    case "openai":
-      return extractWithOpenAI(fileBuffer, mimeType);
     case "gemini":
       return extractWithGemini(fileBuffer, mimeType);
     default:
