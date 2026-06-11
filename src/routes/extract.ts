@@ -7,6 +7,8 @@ import { extractTextFromFile } from "../services/aiService";
 import { getFileType, deleteFile } from "../services/fileService";
 import { ApiResponse, ExtractionResult } from "../types";
 import { config } from "../config";
+import path from "path";
+import fs from "fs";
 
 const adapter = new PrismaPg({ connectionString: config.database.url });
 const router: IRouter = Router();
@@ -37,6 +39,8 @@ router.post(
       provider !== "anthropic" &&
       provider !== "gemini"
     ) {
+      // Clean up uploaded file if provider check fails
+      deleteFile(file.path);
       return next(
         new AppError(
           'Invalid provider. Allowed values: "anthropic" or "gemini".',
@@ -102,7 +106,7 @@ router.post(
         },
       });
 
-      deleteFile(file.path);
+      // NOTE: We DO NOT delete the file on failure here to allow for retries.
       next(err);
     }
   },
@@ -139,6 +143,183 @@ router.get(
       data: extraction as ExtractionResult,
     };
     res.json(response);
+  },
+);
+
+/**
+ * GET /api/extract/:id/text
+ * Retrieve only the rawContent as plain text (Content-Type: text/plain).
+ */
+router.get(
+  "/:id/text",
+  async (
+    req: Request<ExtractParams>,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> => {
+    const { id } = req.params;
+
+    const extraction = await prisma.extraction
+      .findUnique({
+        where: { id },
+      })
+      .catch((err: unknown) => {
+        next(err);
+        return null;
+      });
+
+    if (!extraction) {
+      return next(new AppError(`Extraction with id "${id}" not found.`, 404));
+    }
+
+    if (extraction.status !== "COMPLETED") {
+      res.status(400);
+      res.setHeader("Content-Type", "text/plain");
+      res.send(
+        `Extraction status is ${extraction.status}. Only COMPLETED extractions have text content.`,
+      );
+      return;
+    }
+
+    res.setHeader("Content-Type", "text/plain");
+    res.send(extraction.rawContent ?? "");
+  },
+);
+
+/**
+ * DELETE /api/extract/:id
+ * Delete an extraction record from the DB and ensure the temporary file is deleted.
+ */
+router.delete(
+  "/:id",
+  async (
+    req: Request<ExtractParams>,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> => {
+    const { id } = req.params;
+
+    const extraction = await prisma.extraction
+      .findUnique({
+        where: { id },
+      })
+      .catch((err: unknown) => {
+        next(err);
+        return null;
+      });
+
+    if (!extraction) {
+      return next(new AppError(`Extraction with id "${id}" not found.`, 404));
+    }
+
+    // Verify that the file no longer exists or delete it
+    const filePath = path.join(config.upload.dir, extraction.fileName);
+    deleteFile(filePath);
+
+    // Delete record from DB
+    const deleted = await prisma.extraction.delete({
+      where: { id },
+    });
+
+    const response: ApiResponse<ExtractionResult> = {
+      success: true,
+      data: deleted as ExtractionResult,
+    };
+    res.json(response);
+  },
+);
+
+/**
+ * POST /api/extract/:id/retry
+ * Retry a failed extraction.
+ */
+router.post(
+  "/:id/retry",
+  async (
+    req: Request<ExtractParams>,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> => {
+    const { id } = req.params;
+
+    const extraction = await prisma.extraction
+      .findUnique({
+        where: { id },
+      })
+      .catch((err: unknown) => {
+        next(err);
+        return null;
+      });
+
+    if (!extraction) {
+      return next(new AppError(`Extraction with id "${id}" not found.`, 404));
+    }
+
+    if (extraction.status !== "FAILED") {
+      return next(
+        new AppError(
+          `Only failed extractions can be retried. Current status is ${extraction.status}.`,
+          400,
+        ),
+      );
+    }
+
+    const filePath = path.join(config.upload.dir, extraction.fileName);
+    if (!fs.existsSync(filePath)) {
+      return next(
+        new AppError(
+          "The temporary file no longer exists. Please upload the file again.",
+          400,
+        ),
+      );
+    }
+
+    try {
+      // Return status to PENDING/PROCESSING
+      await prisma.extraction.update({
+        where: { id },
+        data: { status: "PROCESSING", errorMessage: null },
+      });
+
+      // Retransmit/reprocess
+      const result = await extractTextFromFile(
+        filePath,
+        extraction.mimeType,
+        extraction.aiProvider as "anthropic" | "gemini" | undefined,
+      );
+
+      // Save success result
+      const completed = await prisma.extraction.update({
+        where: { id },
+        data: {
+          status: "COMPLETED",
+          rawContent: result.content,
+          aiProvider: result.provider,
+          aiModel: result.model,
+          processedAt: new Date(),
+        },
+      });
+
+      // Success -> clean up file
+      deleteFile(filePath);
+
+      const response: ApiResponse<ExtractionResult> = {
+        success: true,
+        data: completed as ExtractionResult,
+      };
+      res.json(response);
+    } catch (err) {
+      // Re-mark as FAILED
+      await prisma.extraction.update({
+        where: { id },
+        data: {
+          status: "FAILED",
+          errorMessage: err instanceof Error ? err.message : "Unknown error",
+        },
+      });
+
+      next(err);
+    }
   },
 );
 
