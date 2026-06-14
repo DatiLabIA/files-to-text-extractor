@@ -19,6 +19,7 @@ const envSchema = z.object({
     .string()
     .default("application/pdf,image/jpeg,image/png,image/webp,image/gif"),
   UPLOAD_DIR: z.string().default("uploads"),
+  AUTH_TOKEN: z.string().min(1),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -36,6 +37,9 @@ export const config = {
   nodeEnv: parsed.data.NODE_ENV,
   database: {
     url: parsed.data.DATABASE_URL,
+  },
+  security: {
+    authToken: parsed.data.AUTH_TOKEN,
   },
   ai: {
     provider: parsed.data.AI_PROVIDER,
