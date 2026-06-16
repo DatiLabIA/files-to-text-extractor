@@ -7,6 +7,7 @@ import { extractTextFromFile } from "../services/aiService";
 import { getFileType, deleteFile } from "../services/fileService";
 import { ApiResponse, ExtractionResult } from "../types";
 import { config } from "../config";
+import { logger } from "../shared/logger";
 import path from "path";
 import fs from "fs";
 
@@ -23,9 +24,20 @@ router.post(
   "/",
   upload.single("file"),
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const startTime = Date.now();
+    const clientIp =
+      (req.headers["x-forwarded-for"] as string) ||
+      req.socket.remoteAddress ||
+      req.ip ||
+      "";
     const file = req.file;
     const provider = req.body.provider as string | undefined;
+
     if (!file) {
+      logger.warn({
+        msg: "Extraction failed: No file uploaded",
+        clientIp,
+      });
       return next(
         new AppError(
           'No file uploaded. Send a file in the "file" form field.',
@@ -39,8 +51,12 @@ router.post(
       provider !== "anthropic" &&
       provider !== "gemini"
     ) {
-      // Clean up uploaded file if provider check fails
       deleteFile(file.path);
+      logger.warn({
+        msg: "Extraction failed: Invalid provider specified",
+        provider,
+        clientIp,
+      });
       return next(
         new AppError(
           'Invalid provider. Allowed values: "anthropic" or "gemini".',
@@ -90,6 +106,19 @@ router.post(
 
       deleteFile(file.path);
 
+      const durationMs = Date.now() - startTime;
+      logger.info({
+        extractionId: completed.id,
+        originalName: completed.originalName,
+        fileType: completed.fileType,
+        fileSizeBytes: completed.fileSizeBytes,
+        aiProvider: completed.aiProvider,
+        aiModel: completed.aiModel,
+        status: "COMPLETED",
+        durationMs,
+        clientIp,
+      });
+
       const response: ApiResponse<ExtractionResult> = {
         success: true,
         data: completed as ExtractionResult,
@@ -97,16 +126,31 @@ router.post(
 
       res.status(200).json(response);
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+
       // Mark as FAILED
       await prisma.extraction.update({
         where: { id: extraction.id },
         data: {
           status: "FAILED",
-          errorMessage: err instanceof Error ? err.message : "Unknown error",
+          errorMessage,
         },
       });
 
-      // NOTE: We DO NOT delete the file on failure here to allow for retries.
+      const durationMs = Date.now() - startTime;
+      logger.error({
+        extractionId: extraction.id,
+        originalName: extraction.originalName,
+        fileType: extraction.fileType,
+        fileSizeBytes: extraction.fileSizeBytes,
+        aiProvider: provider ?? config.ai.provider,
+        aiModel: null,
+        status: "FAILED",
+        durationMs,
+        errorMessage,
+        clientIp,
+      });
+
       next(err);
     }
   },
@@ -240,6 +284,12 @@ router.post(
     res: Response,
     next: NextFunction,
   ): Promise<void> => {
+    const startTime = Date.now();
+    const clientIp =
+      (req.headers["x-forwarded-for"] as string) ||
+      req.socket.remoteAddress ||
+      req.ip ||
+      "";
     const { id } = req.params;
 
     const extraction = await prisma.extraction
@@ -252,10 +302,21 @@ router.post(
       });
 
     if (!extraction) {
+      logger.warn({
+        msg: "Retry extraction failed: Extraction not found",
+        extractionId: id,
+        clientIp,
+      });
       return next(new AppError(`Extraction with id "${id}" not found.`, 404));
     }
 
     if (extraction.status !== "FAILED") {
+      logger.warn({
+        msg: "Retry extraction failed: Extraction is not in FAILED state",
+        extractionId: id,
+        status: extraction.status,
+        clientIp,
+      });
       return next(
         new AppError(
           `Only failed extractions can be retried. Current status is ${extraction.status}.`,
@@ -266,6 +327,12 @@ router.post(
 
     const filePath = path.join(config.upload.dir, extraction.fileName);
     if (!fs.existsSync(filePath)) {
+      logger.warn({
+        msg: "Retry extraction failed: Temporary file missing",
+        extractionId: id,
+        fileName: extraction.fileName,
+        clientIp,
+      });
       return next(
         new AppError(
           "The temporary file no longer exists. Please upload the file again.",
@@ -275,20 +342,17 @@ router.post(
     }
 
     try {
-      // Return status to PENDING/PROCESSING
       await prisma.extraction.update({
         where: { id },
         data: { status: "PROCESSING", errorMessage: null },
       });
 
-      // Retransmit/reprocess
       const result = await extractTextFromFile(
         filePath,
         extraction.mimeType,
         extraction.aiProvider as "anthropic" | "gemini" | undefined,
       );
 
-      // Save success result
       const completed = await prisma.extraction.update({
         where: { id },
         data: {
@@ -300,8 +364,20 @@ router.post(
         },
       });
 
-      // Success -> clean up file
       deleteFile(filePath);
+
+      const durationMs = Date.now() - startTime;
+      logger.info({
+        extractionId: completed.id,
+        originalName: completed.originalName,
+        fileType: completed.fileType,
+        fileSizeBytes: completed.fileSizeBytes,
+        aiProvider: completed.aiProvider,
+        aiModel: completed.aiModel,
+        status: "COMPLETED",
+        durationMs,
+        clientIp,
+      });
 
       const response: ApiResponse<ExtractionResult> = {
         success: true,
@@ -309,13 +385,28 @@ router.post(
       };
       res.json(response);
     } catch (err) {
-      // Re-mark as FAILED
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+
       await prisma.extraction.update({
         where: { id },
         data: {
           status: "FAILED",
-          errorMessage: err instanceof Error ? err.message : "Unknown error",
+          errorMessage,
         },
+      });
+
+      const durationMs = Date.now() - startTime;
+      logger.error({
+        extractionId: extraction.id,
+        originalName: extraction.originalName,
+        fileType: extraction.fileType,
+        fileSizeBytes: extraction.fileSizeBytes,
+        aiProvider: extraction.aiProvider,
+        aiModel: null,
+        status: "FAILED",
+        durationMs,
+        errorMessage,
+        clientIp,
       });
 
       next(err);
