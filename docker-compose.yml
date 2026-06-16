@@ -1,0 +1,48 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: files-extractor-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: files_extractor_db
+    ports:
+      - "5435:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d files_extractor_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  files-extractor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: files-extractor-api
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://postgres:admin@postgres:5432/files_extractor_db
+      - AUTH_TOKEN=${AUTH_TOKEN}
+      - AI_PROVIDER=${AI_PROVIDER}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL}
+      - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB}
+      - ALLOWED_MIME_TYPES=${ALLOWED_MIME_TYPES}
+      - UPLOAD_DIR=${UPLOAD_DIR}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

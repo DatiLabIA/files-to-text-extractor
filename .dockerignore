@@ -1,0 +1,8 @@
+node_modules
+src
+*.ts
+.env
+uploads/
+.git
+.github
+dist
