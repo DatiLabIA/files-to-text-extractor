@@ -33,8 +33,9 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Copiar dependencias de producción y compilados del builder
 COPY package.json pnpm-lock.yaml ./
+COPY tsconfig.json ./
+COPY prisma.config.ts ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
@@ -43,4 +44,4 @@ COPY --from=builder /app/prisma ./prisma
 EXPOSE 3000
 
 # Ejecutar migraciones pendientes y arrancar el servidor
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+CMD ["sh", "-c", "./node_modules/.bin/prisma migrate deploy && node dist/index.js"]

@@ -1,8 +1,8 @@
 node_modules
-src
-*.ts
+dist
 .env
 uploads/
 .git
 .github
-dist
+coverage
+.vscode
